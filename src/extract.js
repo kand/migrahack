@@ -66,5 +66,23 @@ module.exports = {
         fs.writeFile(`${dir}/${year}.csv`, output);
       });
     });
+  },
+  calculateForeignBornRates () {
+    return Object.keys(datas)
+      .map((yearStr) => Number(yearStr))
+      .sort()
+      .reduce((tracts, year) => {
+        datas[year].rows.forEach((row) => {
+          let name = row[2];
+          let totalPop = Number(row[3]);
+          let foreignBornPop = Number(row[4]);
+          if (lodash.isUndefined(tracts[name])) {
+            tracts[name] = [];
+          }
+          tracts[name].push(foreignBornPop / totalPop);
+        });
+
+        return tracts;
+      }, {});
   }
 };
