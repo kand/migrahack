@@ -7,7 +7,8 @@ var stringify = require('csv-stringify');
 var fs = require('fs');
 let StringDecoder = require('string_decoder').StringDecoder;
 
-let datas = {};
+let datas;
+let urbanTractIds;
 
 let colFilter = (col) => {
   return lodash.pullAt(col,
@@ -20,6 +21,15 @@ let colFilter = (col) => {
 
 module.exports = {
   getData () {
+    if (datas) {
+      return datas;
+    } else {
+      datas = {
+        meta: {},
+        years: {}
+      };
+    }
+
     let zip2010 = new AdmZip(__dirname + '/data/ACS_10_5YR_DP02.zip');
     let zip2011 = new AdmZip(__dirname + '/data/ACS_11_5YR_DP02.zip');
     let zip2012 = new AdmZip(__dirname + '/data/ACS_12_5YR_DP02.zip');
@@ -32,6 +42,7 @@ module.exports = {
       zip2012.getEntries().filter((entry) => { return entry.name === 'ACS_12_5YR_DP02.csv'; })[0],
       zip2013.getEntries().filter((entry) => { return entry.name === 'ACS_13_5YR_DP02.csv'; })[0],
       zip2014.getEntries().filter((entry) => { return entry.name === 'ACS_14_5YR_DP02.csv'; })[0],
+      __dirname + '/data/IL_URBAN.csv'
     ];
 
     let done = lodash.after(csvs.length, () => {
@@ -41,14 +52,26 @@ module.exports = {
     console.log('loading data...');
     csvs.forEach((entry) => {
       const decoder = new StringDecoder('utf-8');
-      parse(decoder.write(entry.getData()), {}, (err, rows) => {
-        let name = entry.name.match(/ACS_(\d\d)_5YR/)[1];
+      let raw;
+      if (typeof entry.getData !== 'undefined') {
+        raw = decoder.write(entry.getData());
+      } else {
+        raw = fs.readFileSync(entry, 'utf-8')
+      }
 
-        datas[name] = {
-          rows: rows.map((row) => {
-            return colFilter(row);
-          })
-        };
+      parse(raw, {}, (err, rows) => {
+        if (entry.name) {
+          let name = entry.name.match(/ACS_(\d\d)_5YR/)[1];
+
+          datas.years[name] = {
+            rows: rows.map((row) => {
+              return colFilter(row);
+            })
+          };
+        } else {
+          let name = entry.split('/');
+          datas.meta[name[name.length - 1].replace('.csv', '')] = rows;
+        }
 
         done();
       });
@@ -62,8 +85,8 @@ module.exports = {
       fs.mkdirSync(dir);
     }
 
-    Object.keys(datas).forEach((year) => {
-      stringify(datas[year].rows, (err, output) => {
+    Object.keys(datas.years).forEach((year) => {
+      stringify(datas.years[year].rows, (err, output) => {
         fs.writeFile(`${dir}/${year}.csv`, output);
       });
     });
@@ -74,7 +97,7 @@ module.exports = {
       fs.mkdirSync(dir);
     }
 
-    let rates = this.calculateForeignBornRates();
+    let rates = this.calculateForeignBornRatesByTract();
     let cols = Object.keys(rates[Object.keys(rates)[0]]).sort();
     let rows = [['tract'].concat(cols)]
       .concat(
@@ -93,12 +116,54 @@ module.exports = {
       fs.writeFile(`${dir}/rates.csv`, output);
     });
   },
-  calculateForeignBornRates () {
-    return Object.keys(datas)
+  calculateForeignBornRatePerYrRural () {
+    if (!urbanTractIds) {
+      urbanTractIds = datas.meta['IL_URBAN'].map((row) => row[2]);
+    }
+
+    return this.calculateForeignBornRatePerYr((row) => {
+      return urbanTractIds.indexOf(row[0]) === -1;
+    });
+  },
+  calculateForeignBornRatePerYrUrban () {
+    if (!urbanTractIds) {
+      urbanTractIds = datas.meta['IL_URBAN'].map((row) => row[2]);
+    }
+
+    return this.calculateForeignBornRatePerYr((row) => {
+      return urbanTractIds.indexOf(row[0]) > -1;
+    });
+  },
+  calculateForeignBornRatePerYr (addFilter) {
+    let useFilter = addFilter ? addFilter : (row) => true;
+
+    return Object.keys(datas.years)
+      .map((yearStr) => Number(yearStr))
+      .sort()
+      .reduce((yrs, yr) => {
+        yrs[yr] = datas.years[yr].rows
+          .filter((row, i) => i > 1 && useFilter(row))
+          .map((row) => {
+            return {
+              total: Number(row[3]),
+              foreign: Number(row[4])
+            };
+          })
+          .reduce((totals, mapped) => {
+            return {
+              total: totals.total + mapped.total,
+              foreign: totals.foreign + mapped.foreign
+            };
+          }, { total: 0, foreign: 0 });
+        return yrs;
+      }, {})
+  },
+  calculateForeignBornRatesByTract () {
+    return Object.keys(datas.years)
       .map((yearStr) => Number(yearStr))
       .sort()
       .reduce((tracts, yr) => {
-        datas[yr].rows
+        datas.years[yr].rows
           .filter((row, i) => i > 1)
           .forEach((row) => {
             let lastYr = Number(yr) - 1;
