@@ -9,6 +9,7 @@ let StringDecoder = require('string_decoder').StringDecoder;
 
 let datas;
 let urbanTractIds;
+let within60MilesTractIds;
 
 let colFilter = (col) => {
   return lodash.pullAt(col,
@@ -42,7 +43,8 @@ module.exports = {
       zip2012.getEntries().filter((entry) => { return entry.name === 'ACS_12_5YR_DP02.csv'; })[0],
       zip2013.getEntries().filter((entry) => { return entry.name === 'ACS_13_5YR_DP02.csv'; })[0],
       zip2014.getEntries().filter((entry) => { return entry.name === 'ACS_14_5YR_DP02.csv'; })[0],
-      __dirname + '/data/IL_URBAN.csv'
+      __dirname + '/data/IL_URBAN.csv',
+      __dirname + '/data/IL_WITHIN_60_MILES.csv'
     ];
 
     let done = lodash.after(csvs.length, () => {
@@ -114,6 +116,15 @@ module.exports = {
 
     stringify(rows, (err, output) => {
       fs.writeFile(`${dir}/rates.csv`, output);
+    });
+  },
+  calculateForeignBornRatesOutside60Miles () {
+    if (!within60MilesTractIds) {
+      within60MilesTractIds = datas.meta['IL_WITHIN_60_MILES'].map((row) => row[0]);
+    }
+
+    return this.calculateForeignBornRatePerYr((row) => {
+      return within60MilesTractIds.indexOf(row[1]) === -1;
     });
   },
   calculateForeignBornRatePerYrRural () {
